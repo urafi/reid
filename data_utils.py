@@ -6,6 +6,47 @@ import torch.nn.functional as F
 import time
 import torchvision
 from tqdm import tqdm
+from os import listdir
+import re
+
+
+def learning_rate_list(lr=1e-2, decay_steps=9, decay_rate=0.95, total_epochs=60):
+
+    decayed_lr = np.zeros((total_epochs,1))
+    decayed_lr[0] = lr
+    for ep in range(1, total_epochs):
+        tmp = int((ep) / decay_steps)
+        #print(tmp)
+        decayed_lr[ep][0] = decayed_lr[ep-1] * (pow(decay_rate, tmp))
+    return decayed_lr
+
+def preprocess(path, relabel):
+
+    train_images = listdir(path)
+
+    train_images = sorted(train_images)
+    ret = []
+    pattern = re.compile(r'([-\d]+)_c(\d)')
+    relabel = relabel
+    all_pids = {}
+
+    print('Preprocessing Training data')
+
+    for im in tqdm(train_images):
+
+        pid, cam = map(int, pattern.search(im).groups())
+        if pid == -1: continue
+        if relabel:
+            if pid not in all_pids:
+                all_pids[pid] = len(all_pids)
+        else:
+            if pid not in all_pids:
+                all_pids[pid] = pid
+        pid = all_pids[pid]
+        cam -= 1
+        ret.append((im, pid, cam))
+
+    return ret, int(len(all_pids))
 
 def get_transform(param, crop_pos, output_size, scales):
 
@@ -41,9 +82,9 @@ def train(train_loader, model, optimiser, criterion):
     total_loss = 0
     start_time = time.time()
 
-    for i, (img, ids) in enumerate(tqdm(train_loader)):
+    for i, (img, fname, pid, cam) in enumerate(tqdm(train_loader)):
 
-        ids = ids.cuda(non_blocking=True)
+        ids = pid.cuda(non_blocking=True)
         inputs = img.cuda(non_blocking=True)
 
         output = model(inputs)
@@ -64,64 +105,3 @@ def train(train_loader, model, optimiser, criterion):
     return total_loss
 
 
-def test(val_loader, model, epoch):
-
-    model.eval()
-    det = []
-
-    with torch.no_grad():
-
-        for i, sampled_batch in enumerate(tqdm(val_loader)):
-
-            images = sampled_batch['images']
-            imagesf = sampled_batch['imagesf']
-            inputs = images.cuda(non_blocking=True)
-            inputsf = imagesf.cuda(non_blocking=True)
-
-            single_result_dict = {}
-
-            output = model(inputs)
-
-            sr = output[:, 17:51, :, :].data.cpu()
-
-            output = torch.sigmoid(output[:, 0:17])
-            output = output.data.cpu()
-
-            outputf = model(inputsf)
-            outputf = torch.sigmoid(outputf[:, 0:17])
-            outputf = outputf.data.cpu()
-
-
-            # sr = output[:, 17:51, :, :].data.cpu()
-            # lr = output[:, 51:115, :, :].data.cpu()
-            N = output.shape[0]
-
-            for n in range(N):
-
-                single_result_dict = {}
-                prs = torch.zeros(17, 64, 64)
-                outputflip = outputf[n]
-                outputflip = outputflip[flipRef]
-                for j in range(17):
-                    prs[j] = output[n][j] + torch.from_numpy(cv2.flip(outputflip[j].numpy(), 1))
-
-                keypoints, score = get_preds(prs, sampled_batch['meta']['warps'][n], sr[n])
-
-                single_result_dict['image_id'] = int(sampled_batch['meta']['imgID'][n].item())
-                single_result_dict['category_id'] = 1
-                single_result_dict['keypoints'] = keypoints
-                single_result_dict['score'] = score
-
-                det.append(single_result_dict)
-
-    with open('dt.json', 'w') as f:
-        json.dump(det, f)
-
-    eval_gt = COCO('../Coco/annotations/person_keypoints_val2017.json')
-    eval_dt = eval_gt.loadRes('dt.json')
-    cocoEval = COCOeval(eval_gt, eval_dt, iouType='keypoints')
-    cocoEval.evaluate()
-    cocoEval.accumulate()
-    cocoEval.summarize()
-
-    return cocoEval.stats[0]

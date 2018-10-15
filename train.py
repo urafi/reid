@@ -15,26 +15,30 @@ from torch.nn import DataParallel
 import cv2
 import numpy as np
 from resnet import resnet50
-from data_utils import train
+from data_utils import *
 import matplotlib.pyplot as plt
+from reid.evaluators import *
+import argparse
 
 
 class Market(Dataset):
 
-    def __init__(self, dtype):
+    def __init__(self, dtype, data, img_dir, name):
 
-        self.name = 'Coco'
+        self.name = name
         self.dtype = dtype
         self.crop_size = [256, 128]
         self.is_train = (dtype == 'train')
+        self.anno = data
+        self.img_dir = img_dir
 
-        if self.is_train:
-            with open('data/market_train.json') as anno_file:
-                self.anno = json.load(anno_file)
-        else:
+        #if self.is_train:
+        #    with open('data/market_train.json') as anno_file:
+        #        self.anno = json.load(anno_file)
+        #else:
 
-            with open('data/COCO2017_train.json') as anno_file:
-                self.anno = json.load(anno_file)
+        #    with open('data/COCO2017_train.json') as anno_file:
+        #        self.anno = json.load(anno_file)
             #self.img_dir = img_dir
 
     def __len__(self):
@@ -44,7 +48,7 @@ class Market(Dataset):
 
     def apply_augmentation(self, example, is_train):
 
-        im = cv2.imread(example['image'], 1)
+        im = cv2.imread(self.img_dir + example[0], 1)
 
         im_width, im_height = im.shape[1], im.shape[0]
 
@@ -95,23 +99,26 @@ class Market(Dataset):
         img = torch.transpose(img, 1, 2)
         img = torch.transpose(img, 0, 1)
         img /= 255
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+        img = normalize(img)
 
-        cls = int(example['class']) - 1
+        #cls = example[1]
 
-        return img, cls
+        return img, example[0], example[1], example[2]
 
     def __getitem__(self, ind):
 
             example = self.anno[ind]
 
-            img, cls = self.apply_augmentation(example, self.is_train)
+            img, fname, pid, cam = self.apply_augmentation(example, self.is_train)
 
-            return img, cls
-
-
+            return img, fname, pid, cam
 
 
-def main():
+
+
+def main(args):
 
     manualSeed = random.randint(1, 10000)
     print("Random Seed: ", manualSeed)
@@ -122,52 +129,112 @@ def main():
     #cudnn.deterministic = False
     cudnn.enabled = True
 
-    marketTrain = Market('train')
+    train_source, num_classes = preprocess('market/bounding_box_train', relabel=True)
+    gallery, _ = preprocess('market/bounding_box_test', relabel=False)
+    query, _ = preprocess('market/query', relabel=False)
+
+    marketTrain = Market('train', train_source, 'market/bounding_box_train/','train')
+    galleryds = Market('val', gallery, 'market/bounding_box_test/','gallery')
+    querds = Market('val', query, 'market/query/', 'query')
+
     #coco_val = Coco('../Coco/val2017/', 'val',  transforms.Compose([normalize]))
-    train_batch_size = 96
+    train_batch_size = 32
     #test_batch_size = 64
     train_loader = DataLoader(marketTrain, batch_size=train_batch_size, shuffle=True, num_workers=8, pin_memory=False)
+    query_loader = DataLoader(querds, batch_size=train_batch_size, shuffle=True, num_workers=8, pin_memory=False)
+    gallery_loader = DataLoader(galleryds, batch_size=train_batch_size, shuffle=True, num_workers=8, pin_memory=False)
 
-    num_epochs = 130
 
-    reidNet = resnet50(pretrained=True)
+    num_epochs = 60
+
+    reidNet = resnet50(pretrained=True, num_classes=num_classes)
     reidNet = reidNet.cuda()
     #model = DataParallel(reidNet)
     model = reidNet
 
-    optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
+    lr = 1e-2
+
+    optimiser = torch.optim.Adam(model.parameters(), lr=lr, eps=.1)
+
+    #checkpoint = torch.load('models_epoch/reidNet_10.pth')
+    #model.load_state_dict(checkpoint['state_dict'])
+    #optimiser.load_state_dict(checkpoint['optimizer'])
+
     criterion = torch.nn.CrossEntropyLoss(reduction='elementwise_mean').cuda()
 
-    start_epoch = 0
+    start_epoch = 0#checkpoint['epoch'] + 1
 
     for epoch in range(start_epoch, num_epochs):
 
+        if epoch > 0 and (epoch % 10 == 0):
+                lr /= 2
+                for param_group in optimiser.param_groups:
+                    param_group['lr'] = lr
+
+
         print( "Starting Epoch [%d]" % (epoch))
 
-        #if epoch == 160:
-        #    for param_group in optimiser.param_groups:
-        #        param_group['lr'] = 1e-5
-        #if epoch == 171:
-        #    for param_group in optimiser.param_groups:
-        #        param_group['lr'] = 1e-6
 
         tloss = train(train_loader, model, optimiser, criterion)
-        with open('losses/loss_training.txt', 'a') as the_file:
-            the_file.write(str(tloss) + '\n')
-        the_file.close()
-        #state = test(val_loader, model, epoch)
-        #with open('losses/OKS2.txt', 'a') as the_file:
-        #    the_file.write(str(state) + '\n')
-        #the_file.close()
+
         state = {
             'epoch': epoch,
             'state_dict': model.state_dict(),
             'optimizer': optimiser.state_dict(),
         }
 
+        evaluator = Evaluator(model)
+        all = evaluator.evaluate(query_loader, gallery_loader, query, gallery, args.output_feature, args.rerank)
+        with open('losses/rank1.txt', 'a') as the_file:
+            the_file.write(str(all[0] * 100) + '\n')
+        the_file.close()
+
         model_name = 'models_epoch/reidNet_' + str(epoch) + '.pth'
         torch.save(state, model_name)
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description="baseline")
+    # source
+    parser.add_argument('-s', '--source', type=str, default='market',
+                        choices=['market', 'duke', 'cuhk03_detected'])
+    # target
+    parser.add_argument('-t', '--target', type=str, default='market',
+                        choices=['market', 'duke'])
+    # images
+    parser.add_argument('-b', '--batch-size', type=int, default=64, help="batch size for source")
+    parser.add_argument('-j', '--workers', type=int, default=8)
+    parser.add_argument('--height', type=int, default=256,
+                        help="input height, default: 256")
+    parser.add_argument('--width', type=int, default=128,
+                        help="input width, default: 128")
+    # model
+    #parser.add_argument('-a', '--arch', type=str, default='resnet50',
+    #                    choices=models.names())
+    parser.add_argument('--features', type=int, default=1024)
+    parser.add_argument('--dropout', type=float, default=0.5)
+    # optimizer
+    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--weight-decay', type=float, default=5e-4)
+    # training configs
+    parser.add_argument('--resume', type=str, default='', metavar='PATH')
+    parser.add_argument('--evaluate', action='store_true', default=False,
+                        help="evaluation only")
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--print-freq', type=int, default=100)
+    # metric learning
+    parser.add_argument('--dist-metric', type=str, default='euclidean')
+    # misc
+    #working_dir = osp.dirname(osp.abspath(__file__))
+    # parser.add_argument('--data-dir', type=str, metavar='PATH', default=osp.join(working_dir, 'data'))
+    parser.add_argument('--data-dir', type=str, metavar='PATH', default='//media/ekodirov/1002d198-cc12-4f27-aae2-fdef0f8cea56/Anvpersons/ReID_datasets/deep-person-reid-datasets/hhl/data/')
+    #parser.add_argument('--logs-dir', type=str, metavar='PATH',
+    #                    default=osp.join(working_dir, 'logs'))
+    parser.add_argument('--output_feature', type=str, default='pool5')
+    #random erasing
+    parser.add_argument('--re', type=float, default=0)
+    #  perform re-ranking
+    parser.add_argument('--rerank', action='store_true', help="perform re-ranking")
+
+    main(parser.parse_args())
