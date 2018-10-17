@@ -23,11 +23,12 @@ import argparse
 
 class Market(Dataset):
 
-    def __init__(self, dtype, data, img_dir, name):
+    def __init__(self, dtype, data, img_dir, name, height, width):
 
         self.name = name
         self.dtype = dtype
-        self.crop_size = [256, 128]
+        #self.crop_size = [256, 128]
+        self.crop_size = [height, width]
         self.is_train = (dtype == 'train')
         self.anno = data
         self.img_dir = img_dir
@@ -46,11 +47,24 @@ class Market(Dataset):
         length = len(self.anno)
         return length
 
+    def custom_normalise(self, x, mean, std):
+
+        x = np.float32(x) / 255
+        x[:, :, 0] -= mean[0]
+        x[:, :, 1] -= mean[1]
+        x[:, :, 2] -= mean[2]
+
+        x[:, :, 0] /= std[0]
+        x[:, :, 1] /= std[1]
+        x[:, :, 2] /= std[2]
+
+        return x
+
     def apply_augmentation(self, example, is_train):
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
 
         im = cv2.imread(self.img_dir + example[0], 1)
+
+        # im = self.custom_normalise(cv2.cvtColor(im, cv2.COLOR_BGR2RGB), mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         im_width, im_height = im.shape[1], im.shape[0]
 
@@ -103,9 +117,9 @@ class Market(Dataset):
         img = torch.transpose(img, 0, 1)
         img /= 255
 
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         img = normalize(img)
-
-        #cls = example[1]
+        # cls = example[1]
 
         return img, example[0], example[1], example[2]
 
@@ -137,9 +151,9 @@ def main(args):
     gallery, _ = preprocess(root+'market/bounding_box_test', relabel=False)
     query, _ = preprocess(root+'market/query', relabel=False)
 
-    marketTrain = Market('train', train_source, root+'market/bounding_box_train/','train')
-    galleryds = Market('val', gallery, root+'market/bounding_box_test/','gallery')
-    querds = Market('val', query, root+'market/query/', 'query')
+    marketTrain = Market('train', train_source, root+'market/bounding_box_train/','train', args.height, args.width)
+    galleryds = Market('val', gallery, root+'market/bounding_box_test/','gallery', args.height, args.width)
+    querds = Market('val', query, root+'market/query/', 'query', args.height, args.width)
 
 
     num_epochs = args.epochs
@@ -174,7 +188,7 @@ def main(args):
     # Schedule learning rate
     step_size = args.step_size
     def adjust_lr(epoch):
-        _lr = args.lr * (0.1 ** (epoch // step_size))
+        _lr = args.lr * (args.lr_factor ** (epoch // step_size))
         print(_lr)
         for g in optimiser.param_groups:
             g['lr'] = _lr * g.get('lr_mult', 1)
@@ -223,9 +237,9 @@ if __name__ == '__main__':
     # images
     parser.add_argument('-b', '--batch-size', type=int, default=32, help="batch size for source")
     parser.add_argument('-j', '--workers', type=int, default=8)
-    parser.add_argument('--height', type=int, default=256,
+    parser.add_argument('--height', type=int, default=512,
                         help="input height, default: 256")
-    parser.add_argument('--width', type=int, default=128,
+    parser.add_argument('--width', type=int, default=256,
                         help="input width, default: 128")
     # model
     #parser.add_argument('-a', '--arch', type=str, default='resnet50',
@@ -234,6 +248,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', type=float, default=0.5)
     # optimizer
     parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--lr-factor', type=float, default=0.57)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight-decay', type=float, default=5e-4)
     # training configs
@@ -242,7 +257,7 @@ if __name__ == '__main__':
                         help="evaluation only")
     parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--print-freq', type=int, default=100)
-    parser.add_argument('--step-size', type=int, default=20)
+    parser.add_argument('--step-size', type=int, default=10)
     # metric learning
     parser.add_argument('--dist-metric', type=str, default='euclidean')
     # misc
