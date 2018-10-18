@@ -33,8 +33,9 @@ class ResNet(nn.Module):
                 break
             x = module(x)
 
-        x = nn.AvgPool2d((8, 4), stride=1)(x)
-
+        # x = nn.AvgPool2d((8, 4), stride=1)(x)
+        x = nn.AdaptiveAvgPool2d(1)(x)
+        x = x / x.norm(2, 1).unsqueeze(1).expand_as(x)
         if not self.training:
             return x
 
