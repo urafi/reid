@@ -115,18 +115,19 @@ def preprocess_train(path, relabel):
         annos = json.load(anno_file)
 
     total_pids = 1501
+    N = 10000
 
-    for anno in enumerate(annos):
+    for i in range(N):
 
-        pid = int(total_pids + anno[1]['class'])
+        pid = int(total_pids + annos[i]['class'])
         if pid not in all_pids:
             all_pids[pid] = len(all_pids)
 
         pid = all_pids[pid]
         cam = -1
-        if anno[1]['image'] == 'poseTrack_crops/26325.jpg':
+        if annos[i]['image'] == 'poseTrack_crops/26325.jpg':
             continue
-        ret.append((anno[1]['image'], pid, cam))
+        ret.append((annos[i]['image'], pid, cam))
 
     return ret, int(len(all_pids))
 
@@ -199,20 +200,22 @@ def train(train_loader, model, optimiser, criterion):
         ids = pid.cuda(non_blocking=True)
         inputs = img.cuda(non_blocking=True)
 
-        #output = model(inputs)
+        outputs = model(inputs)
 
-        #l = criterion(output, ids)
+        l = torch.sum(
+            torch.stack([criterion(output, ids) for output in outputs]))
 
-        #total_loss += l.data.item()
 
-        #optimiser.zero_grad()
-        #l.backward()
-        #optimiser.step()
+        total_loss += l.data.item()
+
+        optimiser.zero_grad()
+        l.backward()
+        optimiser.step()
 
         #print ('TrainEpoch [%d], Iter [%d/%d] , loss [%f]'
         #       % (epoch + 1, i + 1, NBatches, l.data.item()))
 
-    print('Total Time for train epoch %.4f' % (time.time() - start_time))
+    #print('Total Time for train epoch %.4f' % (time.time() - start_time))
 
     return total_loss
 
