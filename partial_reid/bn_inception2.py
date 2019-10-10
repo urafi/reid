@@ -72,7 +72,7 @@ class Inception(nn.Module):
         self.conv2_3x3_bn = nn.BatchNorm2d(192, affine=True)
         self.conv2_relu_3x3 = nn.ReLU(inplace)
         self.pd1 = PoseDecoder(192)
-        #self.pd2 = PoseDecoder(192+51)
+        self.pd2 = PoseDecoder(192+51)
         #self.pd3 = PoseDecoder(192 + 51)
         #self.pd4 = PoseDecoder(192 + 51)
 
@@ -89,11 +89,11 @@ class Inception(nn.Module):
         conv2_3x3_bn_out = self.conv2_3x3_bn(conv2_3x3_out)
         x = self.conv2_relu_3x3(conv2_3x3_bn_out)
         output1 = self.pd1(x)
-        #output2 = self.pd2(torch.cat([x ,output1],1))
+        output2 = self.pd2(torch.cat([x ,output1],1))
         #output3 = self.pd3(torch.cat([x, output2], 1))
         #output4 = self.pd4(torch.cat([x, output3], 1))
 
-        return output1
+        return [output1, output2]#
 
 class PoseDecoder(nn.Module):
 
@@ -310,7 +310,7 @@ class PoseDecoder(nn.Module):
         self.inception_5b_pool_proj_bn = nn.BatchNorm2d(128, affine=True)
         self.inception_5b_relu_pool_proj = nn.ReLU(inplace)
         self.Conv2dT_1 = BasicConv2dTranspose(1024, 1024, batch_norm=True, actv=True, kernel=2, stride=2)
-        self.Conv2dT_2 = BasicConv2dTranspose(1024 + 608, 32, kernel=8, stride=4, padding=2)
+        self.Conv2dT_2 = BasicConv2dTranspose(1024 + 608, 51, kernel=8, stride=4, padding=2)
 
 
     def features(self, x):
@@ -543,8 +543,6 @@ class PoseDecoder(nn.Module):
         x_8 = self.Conv2dT_1(x)
         output = torch.cat([x_8, x_16], 1)
         output = self.Conv2dT_2(output)
-        #output = F.normalize(output, p=2, dim=1)
-
         # x = self.logits(x)
 
         return output

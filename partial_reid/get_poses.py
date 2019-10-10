@@ -60,9 +60,9 @@ class ReidData:
         imf = torch.transpose(imf, 0, 1)
         imf /= 255
 
-        #warp = torch.from_numpy(np.linalg.inv(t_form))
+        warp = torch.from_numpy(np.linalg.inv(t_form))
 
-        return img, imf#, warp
+        return img, imf, warp
 
     def __getitem__(self, ind):
 
@@ -74,9 +74,9 @@ class ReidData:
 
         #meta = {'index': ind, 'imgID': self.anno[ind]['im_id'],
         #        'warps': warps, 'kpts': kpts, 'area' : area, 'bbox' : bbx, 'truncated':self.anno[ind]['truncated']}
-        im, imf = self.apply_augmentation_test(self.img_dir + self.image_names[ind], output_size=256)
+        im, imf, warp = self.apply_augmentation_test(self.img_dir + self.image_names[ind], output_size=256)
 
-        return im, imf, self.image_names[ind]
+        return im, imf, warp, self.image_names[ind]
         #return {'images': images, 'imagesf' : imagesf, 'meta' : meta}
 
 
@@ -110,7 +110,7 @@ counter = 0
 total = 0
 truncated = 0
 
-for i_batch, (im, imf, im_name) in enumerate(val_loader):
+for i_batch, (im, imf, warps, im_name) in enumerate(val_loader):
 
     with torch.no_grad():
 
@@ -140,7 +140,7 @@ for i_batch, (im, imf, im_name) in enumerate(val_loader):
             for j in range(17):
                 prs[j] = output_det[n][j] + torch.from_numpy(cv2.flip(output_detf[n][j].numpy(), 1))
 
-            keypoints, score = get_preds(prs, sr[n])
+            keypoints, score = get_preds(prs, sr[n], warps[n])
 
             single_result_dict['image'] = im_name[0]
             single_result_dict['keypoints'] = keypoints

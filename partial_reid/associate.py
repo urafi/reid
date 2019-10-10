@@ -96,7 +96,7 @@ def get_max(val_k):
     return ind
 
 
-def get_preds(prs, sr):
+def get_preds(prs, sr, mat):
 
 
     xoff = sr[0:17]
@@ -122,15 +122,22 @@ def get_preds(prs, sr):
         points[j][1] = (y * 4) + dy.item()
         scores.append(val_k[j][0].item())
 
+    X = []
+    Y = []
+
     for j in range(17):
 
         point = torch.ones(3, 1)
         point[0][0] = points[j][0]
         point[1][0] = points[j][1]
 
-        keypoints.append(int(point[0][0]))
-        keypoints.append(int(point[1][0]))
-        keypoints.append(1)
+        keypoint = np.matmul(mat, point)
+        X.append([float(keypoint[0].item())])
+        Y.append([float(keypoint[1].item())])
+
+        #keypoints.append(float(keypoint[0].item()))
+        #keypoints.append(float(keypoint[1].item()))
+    keypoints.append([X, Y])
 
     return keypoints, scores
 
